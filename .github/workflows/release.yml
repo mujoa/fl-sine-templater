@@ -1,0 +1,102 @@
+# Build and publish a release when a version tag is pushed.
+#
+#   git tag -a v0.3.0 -m "SINE Templater 0.3.0 ..."
+#   git push origin v0.3.0
+#
+# The tag message becomes the release notes, so write it the way the release
+# should read. Nothing else is needed: this job freezes the executables, zips
+# dist\SINE Templater\ and attaches the zip to a new GitHub release.
+#
+# Windows only, and not because of the workflow: the build is a Windows
+# executable, so it has to be frozen on Windows.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write        # gh release create writes to the repository
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The whole history, so the annotated tag object is present locally --
+          # `gh release create --notes-from-tag` reads the message out of it.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          # Pinned rather than "3.x": this is the interpreter that ends up inside
+          # the shipped folder, and a release should not change it by surprise.
+          python-version: "3.11"
+
+      # The tag and __version__ are written in two different places by hand, so
+      # check they agree before building anything. Getting this wrong ships a
+      # v0.3.0 zip whose About box says 0.2.0.
+      - name: Check the tag matches __version__
+        id: version
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $expected = $tag -replace '^v', ''
+          $init = Get-Content sine_templater/__init__.py -Raw
+          if ($init -notmatch '__version__\s*=\s*"([^"]+)"') {
+              throw "no __version__ found in sine_templater/__init__.py"
+          }
+          $version = $Matches[1]
+          if ($version -ne $expected) {
+              throw "tag $tag does not match __version__ $version"
+          }
+          Write-Host "Building $tag (__version__ $version)"
+          "version=$version" | Out-File $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      # The same script used locally. It creates its own virtual environment,
+      # freezes both executables, copies LICENSE and README.md in, and then
+      # starts both to prove the trimmed build still runs -- which is the only
+      # verification there is here, since the test suite is not in this repo.
+      - name: Build
+        run: powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
+
+      # Python's zipfile rather than Compress-Archive: on Windows PowerShell 5.1
+      # the latter writes backslash entry paths, which breaks every unzip tool
+      # that is not Explorer.
+      - name: Zip
+        shell: python
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          import os
+          import zipfile
+          from pathlib import Path
+
+          root = Path("dist/SINE Templater")
+          out = Path("dist") / f"SINE-Templater-{os.environ['TAG']}.zip"
+
+          # Written beside the executable on first run -- the smoke check in the
+          # build script triggers it -- and extracted again on the user's own
+          # first run from the copy inside _internal. Shipping it twice would
+          # only raise the question of which one is read.
+          skip = {root / "channel_colors.yaml"}
+
+          files = sorted(p for p in root.rglob("*") if p.is_file() and p not in skip)
+          with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+              for path in files:
+                  archive.write(path, str(path.relative_to(root.parent)).replace("\\", "/"))
+
+          print(f"{out}  {out.stat().st_size:,} bytes  {len(files)} entries")
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$env:TAG" "dist/SINE-Templater-$env:TAG.zip" `
+            --title "SINE Templater $env:VERSION" `
+            --notes-from-tag `
+            --verify-tag
