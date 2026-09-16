@@ -1,0 +1,28 @@
+# Channel rack and mixer palette.
+#
+# Colors are used in section order: the first SINE instance in the rack takes the
+# first color, the second takes the second, and so on. Sections past the end of
+# the list wrap back to the top, so the list can be any length from one color
+# upwards -- add, remove and reorder freely.
+#
+# A section's color is used for its SINE channel, every BRSO channel generated
+# from it, and its whole mixer block (section bus, main out, instrument inserts,
+# and any reserved slots).
+#
+# Keep the quotes: an unquoted # starts a comment in YAML, so "#c30e0e" needs them.
+#
+# Point the tool at a different file with:  build ... --colors <path>
+
+colors:
+  - "#c30e0e"   # red
+  - "#ffc000"   # amber
+  - "#b45f06"   # brown
+  - "#56b82c"   # green
+  - "#3d85c6"   # blue
+  - "#eeeeee"   # near-white
+  - "#333333"   # near-black
+  - "#7b1ec9"   # violet
+  - "#e87d14"   # orange
+  - "#ed72e3"   # pink
+  - "#1bd69a"   # mint
+  - "#1de4eb"   # cyan

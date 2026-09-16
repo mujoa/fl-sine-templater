@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# FL Studio projects: inputs and generated templates alike.
+*.flp
+
+# PyInstaller: the throwaway build virtualenv and its output.
+# Rebuild with packaging/build_windows.ps1
+.venv-build/
+build/
+dist/
