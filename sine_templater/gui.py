@@ -24,11 +24,31 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font, messagebox, ttk
 
-from . import core, palette_editor, plan as plan_mod, report
+from . import __version__, core, palette_editor, plan as plan_mod, report
 
 FILETYPES = [("FL Studio project", "*.flp"), ("All files", "*.*")]
 
 COMPACT_LABEL = "Compact mixer (only the inserts each instrument uses)"
+
+# What the tool was built and tested against, read out of the reference project
+# rather than assumed: FL Studio writes its own version into the .flp, SINE
+# records `samplerVersion` in its state, and BRSO's state carries a format
+# version and a settings block whose length identifies the release.
+#
+# Deliberately "tested against" and not "required": nothing here is enforced.
+# The tool reads what a project actually contains -- BRSO settings are located by
+# name so a release that adds one still works, and both SINE plugin formats are
+# handled -- so a version not listed here is untested, not refused.
+TESTED_AGAINST = (
+    ("FL Studio", "21.1.1"),
+    ("SINE Player", "1.3.0  (VST2 and VST3)"),
+    ("BRSO Articulate", "1.17 and 1.33"),
+)
+
+ABOUT_NOTE = (
+    "Other versions are untested rather than unsupported: the tool reads what "
+    "the project actually contains instead of checking version numbers."
+)
 
 # What Text.insert takes: one tag, several, or none.
 Tags = str | tuple[str, ...] | None
@@ -149,10 +169,33 @@ class App(ttk.Frame):
         footer.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(10, 0))
         footer.columnconfigure(0, weight=1)
         ttk.Label(footer, textvariable=self.status_var).grid(row=0, column=0, sticky="w")
+        # Beside the one button that matters, but not competing with it: see
+        # `_quiet_button_style`.
+        ttk.Button(
+            footer, text="About", style=self._quiet_button_style(), command=self._show_about
+        ).grid(row=0, column=1, sticky="e", padx=(0, 6))
         self.build_button = ttk.Button(
             footer, text="Build template", command=self._build, state="disabled"
         )
-        self.build_button.grid(row=0, column=1, sticky="e")
+        self.build_button.grid(row=0, column=2, sticky="e")
+
+    @staticmethod
+    def _quiet_button_style() -> str:
+        """A borderless button style, for an action that should not read as one of
+        the real ones.
+
+        `Toolbutton` is ttk's own answer to this and is what a toolbar icon uses:
+        flat at rest, with the frame appearing only under the pointer. Deriving
+        from it rather than flattening `TButton` keeps that native behavior --
+        the style name has to end in `Toolbutton` for ttk to inherit its layout.
+
+        A plain Label styled to look clickable would be quieter still, but it
+        would stop being a button: no keyboard focus, no space-to-press, nothing
+        for a screen reader to announce.
+        """
+        style = ttk.Style()
+        style.configure("Quiet.Toolbutton", foreground="#6f6f6f", padding=(8, 2))
+        return "Quiet.Toolbutton"
 
     # ----------------------------------------------------------- text output
 
@@ -286,6 +329,67 @@ class App(ttk.Frame):
         self._refresh()   # the plan carries the colors, so it has to be re-shown
         self._idle(f"Colors saved to {saved}")
 
+    def _show_about(self) -> None:
+        """The version, and what it was tested against.
+
+        A window of its own rather than a messagebox: the compatibility list only
+        lines up in a fixed font, and a system dialog does not give one.
+        """
+        window = tk.Toplevel(self)
+        window.title("About SINE Templater")
+        window.resizable(False, False)
+        window.transient(self.winfo_toplevel())
+
+        body = ttk.Frame(window, padding=16)
+        body.grid(row=0, column=0, sticky="nsew")
+
+        # Kept on the instance: Tk does not own a Font object, and a collected one
+        # takes the label's styling with it.
+        self._about_font = font.nametofont("TkDefaultFont").copy()
+        self._about_font.configure(
+            size=abs(self._about_font.cget("size")) + 4, weight="bold"
+        )
+        ttk.Label(body, text="SINE Templater", font=self._about_font).grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Label(body, text=f"Version {__version__}", foreground="#6f6f6f").grid(
+            row=1, column=0, sticky="w", pady=(2, 10)
+        )
+        ttk.Label(
+            body,
+            text="Wires SINE Player instruments to BRSO Articulate and the FL mixer.",
+            wraplength=360,
+            justify="left",
+        ).grid(row=2, column=0, sticky="w")
+
+        ttk.Separator(body).grid(row=3, column=0, sticky="ew", pady=12)
+        ttk.Label(body, text="Built and tested against").grid(row=4, column=0, sticky="w")
+
+        fixed = font.nametofont("TkFixedFont")
+        table = ttk.Frame(body)
+        table.grid(row=5, column=0, sticky="w", pady=(6, 10))
+        width = max(len(name) for name, _ in TESTED_AGAINST)
+        for row, (name, value) in enumerate(TESTED_AGAINST):
+            ttk.Label(table, text=name.ljust(width), font=fixed).grid(
+                row=row, column=0, sticky="w"
+            )
+            ttk.Label(table, text=value, font=fixed, foreground="#1a5fb4").grid(
+                row=row, column=1, sticky="w", padx=(12, 0)
+            )
+
+        ttk.Label(
+            body, text=ABOUT_NOTE, wraplength=360, justify="left", foreground="#6f6f6f"
+        ).grid(row=6, column=0, sticky="w")
+
+        close = ttk.Button(body, text="Close", command=window.destroy)
+        close.grid(row=7, column=0, sticky="e", pady=(14, 0))
+        window.bind("<Escape>", lambda _e: window.destroy())
+        window.bind("<Return>", lambda _e: window.destroy())
+        window.protocol("WM_DELETE_WINDOW", window.destroy)
+        palette_editor.center_over(window, self)
+        window.grab_set()
+        close.focus_set()
+
     # -------------------------------------------------------------- pipeline
 
     def _output_path(self) -> Path | None:
@@ -387,7 +491,7 @@ class App(ttk.Frame):
 def main(input_path: Path | str | None = None, *, compact: bool = False) -> int:
     _enable_dpi_awareness()
     root = tk.Tk()
-    root.title("SINE Templater")
+    root.title(f"SINE Templater {__version__}")
     _apply_icon(root)
     root.minsize(760, 560)
     app = App(root)

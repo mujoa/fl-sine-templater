@@ -65,6 +65,15 @@ def parse_color(text: str) -> int | None:
     return int(digits, 16)
 
 
+def center_over(window: tk.Toplevel, master: tk.Misc) -> None:
+    """Put a dialog over the window it belongs to, which is where the eye is."""
+    window.update_idletasks()
+    top = master.winfo_toplevel()
+    x = top.winfo_rootx() + (top.winfo_width() - window.winfo_width()) // 2
+    y = top.winfo_rooty() + (top.winfo_height() - window.winfo_height()) // 3
+    window.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+
+
 def format_color(color: int) -> str:
     return f"#{color:06x}"
 
@@ -155,7 +164,7 @@ class PaletteEditor(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         self.bind("<Escape>", lambda _e: self._cancel())
         self.bind("<Return>", lambda _e: self._save())
-        self._center(master)
+        center_over(self, master)
         self.grab_set()
         self._slots[0].entry.focus_set()
         self.wait_window(self)
@@ -206,14 +215,6 @@ class PaletteEditor(tk.Toplevel):
         )
         ttk.Button(buttons, text="Cancel", command=self._cancel).grid(row=0, column=1)
         ttk.Button(buttons, text="Save", command=self._save).grid(row=0, column=2, padx=(6, 0))
-
-    def _center(self, master: tk.Misc) -> None:
-        """Over the parent window, which is where the eye already is."""
-        self.update_idletasks()
-        top = master.winfo_toplevel()
-        x = top.winfo_rootx() + (top.winfo_width() - self.winfo_width()) // 2
-        y = top.winfo_rooty() + (top.winfo_height() - self.winfo_height()) // 3
-        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
 
     def _restore(self) -> None:
         defaults = plan_mod.default_channel_colors()
