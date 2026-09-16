@@ -8,7 +8,14 @@ from pathlib import Path
 from . import brso, flp, model, sine, wrapper
 
 SLOTS_PER_INSTANCE = 16           # SINE's 16 MIDI channels
-MAX_INSERT = 126                  # FL has 127 inserts, 0 = Master
+
+# The highest insert a project can use, which depends on its FL version. Up to
+# FL 21 the mixer was a fixed 127 blocks: Master, inserts 1..125, and a trailing
+# block for the "current" insert that is not one of them. FL 2026 made the mixer
+# grow on demand -- a new project has 16 inserts and it goes to 500 -- so the
+# ceiling rises and `apply` creates whatever blocks the layout needs.
+MAX_INSERT_FIXED = 125
+MAX_INSERT_DYNAMIC = 500
 
 # Mixer layout for K instances:
 #   insert 0            Master
@@ -18,14 +25,26 @@ MAX_INSERT = 126                  # FL has 127 inserts, 0 = Master
 # The SINE channel itself sits on its section bus, so a block holds nothing but
 # instrument inserts. With reserved slots (the default) it is padded out to all 16
 # MIDI channels, so a block is SLOTS_PER_INSTANCE wide and the instrument for MIDI
-# channel c always sits at base + c - 1. Highest insert used is then 17K, capping K
-# at 7. Compact blocks drop the padding: only the instruments that exist get an
-# insert, packed in MIDI-channel order, which is what lifts that cap.
+# channel c always sits at base + c - 1. Highest insert used is then 17K, which caps
+# K at 7 on a fixed mixer and 29 on a dynamic one. Compact blocks drop the padding:
+# only the instruments that exist get an insert, packed in MIDI-channel order, which
+# is what lifts that cap. BRSO still addresses 16 MIDI channels per instance either
+# way, so the two layouts differ only in how much mixer they spend.
 #
 # Nothing is routed to SINE's own main bus, but whatever reaches it -- an instrument
 # added by hand inside SINE, an audition from its browser -- lands on the section
 # bus alongside the summed instruments rather than on an insert of its own.
-MAX_INSTANCES = MAX_INSERT // (SLOTS_PER_INSTANCE + 1)
+
+
+def max_insert(project: flp.Project) -> int:
+    """The highest mixer insert this project's FL version can address."""
+    return MAX_INSERT_DYNAMIC if model.dynamic_mixer(project) else MAX_INSERT_FIXED
+
+
+def max_instances(ceiling: int) -> int:
+    """How many instances fit with reserved slots: a section bus plus 16 inserts each."""
+    return ceiling // (SLOTS_PER_INSTANCE + 1)
+
 
 # The channel rack / mixer palette, one 0xRRGGBB color per SINE instance. Kept in
 # a YAML file next to this module so colors can be tried out without touching the
@@ -289,6 +308,7 @@ class Plan:
     donor_channel: model.ChannelBlock
     donor_tail: bytes
     first_new_channel: int
+    max_insert: int                     # this project's ceiling; see MAX_INSERT_FIXED
 
     @property
     def instruments(self) -> list[tuple[InstancePlan, InstrumentPlan]]:
@@ -344,12 +364,13 @@ def derive(
     brso.validate_tail(donor_tail)
 
     count = len(sine_blocks)
+    ceiling = max_insert(project)
     # Reserved blocks have a fixed width, so this is knowable before the (large)
     # plugin states are parsed. Compact blocks are sized in _assign_inserts.
-    if not compact and count > MAX_INSTANCES:
+    if not compact and count > max_instances(ceiling):
         raise ValueError(
             f"{count} SINE instances need mixer inserts up to {count * (SLOTS_PER_INSTANCE + 1)}, "
-            f"but FL only has {MAX_INSERT}. Maximum is {MAX_INSTANCES} instances with "
+            f"but FL only has {ceiling}. Maximum is {max_instances(ceiling)} instances with "
             f"reserved slots; --compact-mixer allocates only the inserts actually used."
         )
 
@@ -398,17 +419,20 @@ def derive(
             )
         instances.append(plan)
 
-    _assign_inserts(instances)
+    _assign_inserts(instances, ceiling)
 
     return Plan(
         instances=instances,
         donor_channel=donor,
         donor_tail=donor_tail,
         first_new_channel=donor.index,      # donor is dropped, so its index is reused
+        max_insert=ceiling,
     )
 
 
-def _assign_inserts(instances: list[InstancePlan]) -> None:
+def _assign_inserts(
+    instances: list[InstancePlan], ceiling: int = MAX_INSERT_FIXED
+) -> None:
     """Place the blocks after the section buses and give every instrument its insert.
 
     Inserts 1..K are the section buses, one per instance, so the first block starts
@@ -431,11 +455,11 @@ def _assign_inserts(instances: list[InstancePlan]) -> None:
         base += instance.block_size
 
     highest = base - 1
-    if highest > MAX_INSERT:
+    if highest > ceiling:
         total = sum(len(i.instruments) for i in instances)
         raise ValueError(
             f"{count} SINE instances with {total} instruments need mixer inserts up to "
-            f"{highest}, but FL only has {MAX_INSERT}."
+            f"{highest}, but FL only has {ceiling}."
         )
 
 
@@ -481,5 +505,5 @@ def describe(plan: Plan) -> str:
                  f"channel index {plan.first_new_channel}")
     layout = "reserved slots" if plan.instances[0].reserve_slots else "compact"
     lines.append(f"mixer layout: {layout}, highest insert used {plan.highest_insert} "
-                 f"of {MAX_INSERT}")
+                 f"of {plan.max_insert}")
     return "\n".join(lines)

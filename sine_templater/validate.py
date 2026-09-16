@@ -15,6 +15,8 @@ def check(data: bytes, plan: plan_mod.Plan) -> list[str]:
         problems.append(f"channel count mismatch: header {project.nch}, {starts} starts, {ends} ends")
         return problems
 
+    problems += _mixer_size(project, plan)
+
     blocks = model.channel_blocks(project)
     names = _insert_names(project)
     colors = _insert_colors(project)
@@ -181,6 +183,35 @@ def warnings(plan: plan_mod.Plan) -> list[str]:
     return out
 
 
+def _mixer_size(project: flp.Project, plan: plan_mod.Plan) -> list[str]:
+    """The mixer must actually hold every insert the layout puts something on.
+
+    An insert past the end of the mixer is not an error FL reports: the routing
+    and the names simply have nowhere to land, and the template opens missing
+    whatever was meant to sit there. On a dynamic mixer the blocks are created
+    during the build, so this is the check that they all got written.
+    """
+    problems: list[str] = []
+    blocks = model.insert_count(project)
+    # The last block is the mixer's "current" insert, not one the layout may use.
+    if plan.highest_insert + 2 > blocks:
+        problems.append(
+            f"the mixer holds {blocks} insert blocks, but the layout uses inserts up "
+            f"to {plan.highest_insert}; the ones past the end were never created"
+        )
+    declared = [
+        int.from_bytes(payload, "little")
+        for eid, payload in project.events
+        if eid == flp.EV_INSERT_COUNT
+    ]
+    for count in declared:
+        if count != blocks:
+            problems.append(
+                f"the mixer says it has {count} inserts but carries {blocks}"
+            )
+    return problems
+
+
 def _articulation_limits(plan: plan_mod.Plan) -> list[str]:
     """No BRSO channel may hold more articulations than its grid has cells.
 
@@ -268,7 +299,7 @@ def _layout_conflicts(plan: plan_mod.Plan) -> list[str]:
 
 def _channel_insert(project: flp.Project, block: model.ChannelBlock) -> int | None:
     for eid, payload in project.events[block.span]:
-        if eid == flp.EV_CHAN_INSERT:
+        if eid in flp.CHAN_INSERT_EVENTS:
             return int.from_bytes(payload, "little")
     return None
 

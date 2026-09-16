@@ -13,10 +13,12 @@ MAGIC_HEADER = b"FLhd"
 MAGIC_DATA = b"FLdt"
 
 # Event ids used by this tool. Payload width is implied by the id:
-# <64 -> 1 byte, <128 -> 2, <192 -> 4, >=192 -> varint length prefix.
+# <64 -> 1 byte, <128 -> 2, <192 -> 4, >=192 -> varint length prefix, except for
+# the handful of ids in EXPLICIT_WIDTHS below.
 EV_CHAN_NEW = 64          # channel index (starts a channel block)
 EV_CHAN_END = 20          # last event of a channel block
-EV_CHAN_INSERT = 22       # channel -> mixer insert
+EV_CHAN_INSERT = 22       # channel -> mixer insert, one byte (FL 21 and earlier)
+EV_CHAN_INSERT_WIDE = 104 # the same field from FL 2026 on: two bytes, for 500 inserts
 EV_CHAN_COLOR = 128
 EV_CHAN_ORDINAL = 132     # two uint16, both = channel index + 1
 EV_CHAN_GROUP = 145       # channel rack filter group (index into the group name list)
@@ -27,9 +29,35 @@ EV_PLUGIN_STATE = 213
 EV_INSERT_NAME = 204      # precedes that insert's own parameter block
 EV_INSERT_PARAMS = 236    # starts an insert block; index = ordinal
 EV_INSERT_ROUTING = 235   # byte array indexed by destination insert
-EV_INSERT_ICON = 147      # always present; the color event follows it when set
+EV_INSERT_ICON = 147      # last event of an insert's own block
 EV_INSERT_COLOR = 149     # emitted only for inserts that have a color
 EV_INSERT_HAS_COLOR = 42  # 1 = use the color event, 0 = default gray
+EV_INSERT_COUNT = 103     # FL 2026: how many insert blocks the mixer carries
+
+# A channel's mixer insert, under both ids it has had. Only one of them appears in
+# any given project, so code that reads or rewrites the field matches on the pair
+# and takes the width from whichever id it found.
+CHAN_INSERT_EVENTS = (EV_CHAN_INSERT, EV_CHAN_INSERT_WIDE)
+
+# FL 2026 writes event 172 with a three-byte payload, which none of the size
+# classes can express. What it holds is unknown and nothing here needs it; the
+# parser only has to step over it without losing alignment, which is what this
+# table is for. Getting a width wrong desynchronizes the whole event stream, so
+# `parse` insists on landing exactly on the end of the chunk.
+EXPLICIT_WIDTHS = {172: 3}
+
+
+def payload_width(eid: int) -> int | None:
+    """Fixed payload width for an event id, or None when the payload is length-prefixed."""
+    if eid in EXPLICIT_WIDTHS:
+        return EXPLICIT_WIDTHS[eid]
+    if eid < 64:
+        return 1
+    if eid < 128:
+        return 2
+    if eid < 192:
+        return 4
+    return None
 
 
 def encode_color(rgb: int) -> bytes:
@@ -95,16 +123,17 @@ def parse(data: bytes) -> Project:
     while pos < end:
         eid = data[pos]
         pos += 1
-        if eid < 64:
-            width = 1
-        elif eid < 128:
-            width = 2
-        elif eid < 192:
-            width = 4
-        else:
+        width = payload_width(eid)
+        if width is None:
             width, pos = _read_varint(data, pos)
         events.append((eid, data[pos : pos + width]))
         pos += width
+    if pos != end:
+        raise ValueError(
+            f"the event stream overruns the {MAGIC_DATA!r} chunk by {pos - end} byte(s): "
+            f"this project uses an event whose payload width the parser gets wrong. "
+            f"It was most likely saved by a newer FL Studio than this tool knows about."
+        )
     return Project(fmt=fmt, nch=nch, ppq=ppq, events=events)
 
 

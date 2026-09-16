@@ -101,8 +101,8 @@ def _summary(
     out.field("Inserts")
     out.add(f"{lowest}–{plan.highest_insert}", "num")
     out.add(" of ", "dim")
-    out.add(str(plan_mod.MAX_INSERT), "num")
-    out.line(f"   ({plan_mod.MAX_INSERT - plan.highest_insert} still free)", "dim")
+    out.add(str(plan.max_insert), "num")
+    out.line(f"   ({plan.max_insert - plan.highest_insert} still free)", "dim")
 
     out.field("New channels")
     out.add(str(len(instruments)), "num")

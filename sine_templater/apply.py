@@ -4,7 +4,8 @@ Four passes, ordered so that no pass invalidates positions the next one needs:
 
 1. SINE channel edits     -- in place, event count unchanged
 2. donor -> BRSO channels -- a slice replacement at the end of the channel region
-3. mixer rewrite          -- a stateful walk, so it needs no precomputed positions
+3. mixer rewrite          -- creates the inserts the plan needs and the project
+   does not have, then a stateful walk, so it needs no precomputed positions
    (it may insert name and color events for inserts that have none)
 4. filter groups          -- also a walk; it changes offsets ahead of the channels,
    so nothing position-based may follow it
@@ -49,10 +50,10 @@ def _rewrite_sine_channels(events: Events, blocks, plan: plan_mod.Plan) -> None:
         buses = {i.midi_channel: i.bus for i in instance.instruments}
         for position in range(block.start, block.end + 1):
             eid, payload = events[position]
-            if eid == flp.EV_CHAN_INSERT:
+            if eid in flp.CHAN_INSERT_EVENTS:
                 # The channel sits on its section bus, and every plugin output
                 # offset is measured from there.
-                events[position] = (eid, struct.pack("<B", instance.bus_insert))
+                events[position] = (eid, _insert_payload(eid, instance.bus_insert))
             elif eid == flp.EV_CHAN_COLOR:
                 events[position] = (eid, flp.encode_color(instance.color))
             elif eid == flp.EV_CHAN_GROUP:
@@ -102,6 +103,15 @@ def _build_brso_channels(donor_events: Events, plan: plan_mod.Plan) -> Events:
     return out
 
 
+def _insert_payload(eid: int, insert: int) -> bytes:
+    """A channel's mixer insert, in the width the event id it was found under uses.
+
+    One byte up to FL 21, two from FL 2026 on; the project keeps whichever it was
+    saved with rather than being converted either way.
+    """
+    return insert.to_bytes(flp.payload_width(eid), "little")
+
+
 def _clone_channel(donor_events: Events, *, index, name, state, color, group) -> Events:
     cloned: Events = []
     for eid, payload in donor_events:
@@ -117,8 +127,8 @@ def _clone_channel(donor_events: Events, *, index, name, state, color, group) ->
             payload = struct.pack("<HH", index + 1, index + 1)
         elif eid == flp.EV_CHAN_GROUP:
             payload = struct.pack("<I", group)
-        elif eid == flp.EV_CHAN_INSERT:
-            payload = struct.pack("<B", 0)      # BRSO produces no audio
+        elif eid in flp.CHAN_INSERT_EVENTS:
+            payload = _insert_payload(eid, 0)   # BRSO produces no audio
         cloned.append((eid, payload))
     return cloned
 
@@ -168,6 +178,65 @@ def _rewrite_filter_groups(events: Events, plan: plan_mod.Plan) -> Events:
 
 # --- pass 3: mixer ---------------------------------------------------------
 
+def _insert_bodies(events: Events) -> list[tuple[int, int]]:
+    """(first, last) event index of each insert's own events, in mixer order.
+
+    A block runs from its EV_INSERT_PARAMS to its EV_INSERT_ICON. The color, the
+    color flag and the name that follow the icon describe the *next* insert, which
+    is how FL writes them and how `_rewrite_mixer` reads them back.
+    """
+    starts = [i for i, (eid, _) in enumerate(events) if eid == flp.EV_INSERT_PARAMS]
+    icons = [i for i, (eid, _) in enumerate(events) if eid == flp.EV_INSERT_ICON]
+    if len(starts) != len(icons) or any(i <= s for s, i in zip(starts, icons)):
+        raise ValueError(
+            f"the mixer has {len(starts)} insert block(s) and {len(icons)} icon event(s), "
+            f"which do not pair up one to one; this project is not shaped the way FL "
+            f"writes one"
+        )
+    return list(zip(starts, icons))
+
+
+def _grow_mixer(events: Events, plan: plan_mod.Plan) -> Events:
+    """Create the insert blocks the plan needs and the project does not have.
+
+    From FL 2026 on the mixer is only as large as the project made it -- 16 inserts
+    in a new one, up to 500 -- so most of the inserts this tool wires up do not
+    exist yet and have to be written. A new block is a copy of the last ordinary
+    one, which gives it FL's own defaults for everything the plan says nothing
+    about; the walk below then names, colors and routes it like any other.
+
+    The copies go after the last ordinary insert and before the mixer's trailing
+    "current" block, so no existing insert changes index. Each one is preceded by
+    its own EV_INSERT_HAS_COLOR, which is the slot FL keeps for it in front of the
+    block rather than inside it.
+
+    An older project carries a fixed 127-block mixer that cannot grow, and the
+    plan's ceiling keeps the layout inside it, so it comes back untouched.
+    """
+    bodies = _insert_bodies(events)
+    wanted = plan.highest_insert + 2        # Master .. highest, plus "current"
+    if len(bodies) >= wanted:
+        return events
+    if not any(eid == flp.EV_INSERT_COUNT for eid, _ in events):
+        raise ValueError(
+            f"the layout needs mixer insert {plan.highest_insert}, but this project has "
+            f"a fixed mixer of {len(bodies)} blocks that cannot be grown"
+        )
+    if len(bodies) < 3:
+        raise ValueError(
+            f"the mixer has {len(bodies)} insert block(s), so there is no ordinary "
+            f"insert to copy new ones from"
+        )
+
+    first, icon = bodies[-2]                # the last insert before "current"
+    template: Events = [(flp.EV_INSERT_HAS_COLOR, b"\x00"), *events[first : icon + 1]]
+    grown = events[: icon + 1] + template * (wanted - len(bodies)) + events[icon + 1 :]
+    count = wanted.to_bytes(flp.payload_width(flp.EV_INSERT_COUNT), "little")
+    return [
+        (eid, count if eid == flp.EV_INSERT_COUNT else payload) for eid, payload in grown
+    ]
+
+
 def _rewrite_mixer(events: Events, plan: plan_mod.Plan) -> Events:
     names: dict[int, str] = {}
     routes: dict[int, int] = {}
@@ -196,7 +265,7 @@ def _rewrite_mixer(events: Events, plan: plan_mod.Plan) -> Events:
     index = -1
     pending: tuple[int, bytes] | None = None
 
-    for eid, payload in events:
+    for eid, payload in _grow_mixer(events, plan):
         if eid == flp.EV_INSERT_NAME:
             # Belongs to the insert whose parameter block comes next.
             pending = (eid, payload)
@@ -211,7 +280,11 @@ def _rewrite_mixer(events: Events, plan: plan_mod.Plan) -> Events:
             out.append((eid, payload))
             continue
         if eid == flp.EV_INSERT_ROUTING and index in routes:
-            table = bytearray(len(payload))
+            # A byte per destination insert. FL 21 wrote all 127 of them; FL 2026
+            # trims the array to the last destination it has anything to say about,
+            # so it has to be widened to reach this one -- and never narrowed, in
+            # case a longer array is carrying something further along.
+            table = bytearray(max(len(payload), routes[index] + 1))
             table[routes[index]] = 1
             out.append((eid, bytes(table)))
             continue

@@ -86,3 +86,14 @@ def insert_name_events(project: flp.Project) -> dict[int, int]:
 
 def insert_count(project: flp.Project) -> int:
     return sum(1 for eid, _ in project.events if eid == flp.EV_INSERT_PARAMS)
+
+
+def dynamic_mixer(project: flp.Project) -> bool:
+    """True when the mixer grows on demand, as it does from FL 2026 on.
+
+    Such a project stores only the inserts it actually has -- 16 in a new one, up
+    to 500 -- and records how many in EV_INSERT_COUNT. Before that the mixer was a
+    fixed 127 blocks that every project carried in full, so there was no count to
+    keep and nothing to grow.
+    """
+    return any(eid == flp.EV_INSERT_COUNT for eid, _ in project.events)
