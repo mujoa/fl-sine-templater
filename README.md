@@ -238,7 +238,9 @@ script did. The result is `dist\SINE Templater\`, holding
 
 * `SINE Templater.exe` — the window, with no console behind it;
 * `sine-templater-cli.exe` — the command line, with the flags above;
-* `_internal\` — shared by both, so the interpreter is only shipped once.
+* `_internal\` — shared by both, so the interpreter is only shipped once;
+* `LICENSE` and `README.md` — copied in by the build script, so a folder handed to
+  someone else carries them.
 
 Zip that folder to hand it to someone else. The script starts both executables before
 calling the build good, so a trimmed build that no longer runs fails there rather than

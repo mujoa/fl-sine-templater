@@ -39,6 +39,14 @@ Write-Host "Freezing ..."
 # A native exe's exit code does not trip $ErrorActionPreference; check it.
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
 
+# PyInstaller ships the app and nothing else, but a copy handed to someone else
+# has to carry the license, and the README is how they use it. Copied on every
+# build rather than left in the folder by hand: COLLECT empties its output
+# directory first, so anything dropped in there by hand is gone by the next build.
+Write-Host "Copying LICENSE and README.md ..."
+Copy-Item (Join-Path $root "LICENSE") -Destination $out -Force
+Copy-Item (Join-Path $root "README.md") -Destination $out -Force
+
 # Smoke check. The spec drops modules the tool does not import (see EXCLUDES);
 # get that wrong and the failure is an ImportError at *runtime*, not a build
 # error, and the test suite runs against the source checkout so it cannot see it.
