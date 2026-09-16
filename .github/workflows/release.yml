@@ -24,13 +24,13 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The whole history, so the annotated tag object is present locally --
           # `gh release create --notes-from-tag` reads the message out of it.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           # Pinned rather than "3.x": this is the interpreter that ends up inside
           # the shipped folder, and a release should not change it by surprise.
