@@ -47,8 +47,9 @@ def main(argv: list[str] | None = None) -> int:
     build.add_argument(
         "--compact-mixer",
         action="store_true",
-        help="give each SINE instance only the inserts its instruments need, instead of "
-             "reserving all 16 MIDI-channel slots (lifts the 7-instance limit)",
+        help="give each SINE instance only the inserts its instruments actually use, "
+             "instead of reserving all 16 MIDI-channel slots for instruments that "
+             "may be added later",
     )
     build.add_argument(
         "--colors",

@@ -148,9 +148,11 @@ nothing else. The two layouts differ only in how wide a block is.
 channel, whether an instrument is on it or not. Unused slots are left unnamed but are
 routed to the section bus already, so an instrument added in SINE later on, say on
 MIDI channel 9, lands on an insert that is already wired and only needs a name. The
-cost is mixer space: at 17 inserts per instance that is at most **7 instances** on FL
-Studio 21 and earlier (125 inserts), and **29** on FL Studio 2026, whose mixer grows
-on demand up to 500.
+cost is mixer space: 16 inserts plus a section bus is 17 per instance, which fits
+**7 instances** on FL Studio 21 and earlier, where the mixer is a fixed 125 inserts,
+and **29** on FL Studio 2026, whose mixer grows on demand up to 500. The tool reads
+the ceiling off the project you give it, so a 2026 project is not held to the old
+limit.
 
 **Compact (`--compact-mixer`, or the checkbox).** A block is exactly as wide as the
 instance has instruments, packed in MIDI channel order. Nothing is reserved, so there
@@ -206,7 +208,7 @@ Every refusal names what is wrong. The common ones:
 | no BRSO Articulate channel found | add one empty BRSO Articulate as the last rack channel |
 | expected exactly one BRSO Articulate channel, found *N* | you pointed it at a template it already built, or at a project with hand-built BRSO channels; point it at the source project |
 | the donor must be the last channel in the rack | move the BRSO channel to the end |
-| needs mixer inserts up to *N*, but FL only has 125 | use the compact layout, or split the project |
+| needs mixer inserts up to *N*, but FL only has *M* | the layout does not fit this project's mixer — use the compact layout, or split the project. *M* is 125 for a project saved by FL Studio 21 or earlier and 500 for one saved by FL Studio 2026; saving the project in 2026 raises it |
 | more than one instrument on MIDI channel(s) *N* | two instruments in one SINE instance share a MIDI channel; change one in SINE |
 | on MIDI channel *N*; only 1..16 are supported | SINE addresses 16 MIDI channels per instance |
 | channel *N* ... is a plugin channel whose state is not a SINE Player's | the project holds another plugin; the input takes SINE instances and the BRSO donor and nothing else |
@@ -232,6 +234,20 @@ together, so they cannot drift apart.
 
 Re-run it on the **source project**, not on a template it produced — a template
 already has its generated BRSO channels, and those are not donors.
+
+## Working on the tool
+
+The repository carries everything needed to build on it:
+
+* `docs/FORMAT.md` — what is known about the `.flp` container, the Fruity Wrapper
+  chunks, SINE's embedded state and BRSO's, and how each finding was established.
+* `docs/SPEC.md` — what the tool does with all that: the input contract, both mixer
+  layouts, the decisions taken and the open items.
+* `docs/UI.md` — the window, freezing the executables, and the distribution question.
+* `tests/` — `python -m pytest` from the repository root. Tests that need a real FL
+  Studio project look in `testfiles/`, which is not tracked; those tests skip when it
+  is absent rather than failing, so the skip count tells you what did not run. See
+  `tests/paths.py`.
 
 ## Building the Windows executables
 

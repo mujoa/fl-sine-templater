@@ -2,8 +2,15 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# FL Studio projects: inputs and generated templates alike.
+# FL Studio projects: inputs and generated templates alike. That covers the test
+# fixture (rebuild it with `python tests/make_fixture.py`) and anything the tool
+# writes.
 *.flp
+
+# The projects the tests read. Large, and somebody's own work, so they are not
+# distributed; tests that need one skip when it is absent. See tests/paths.py for
+# which files are wanted and how to point somewhere else.
+testfiles/
 
 # PyInstaller: the throwaway build virtualenv and its output.
 # Rebuild with packaging/build_windows.ps1
