@@ -48,12 +48,17 @@ WINDOW_ICON = [(ICON, ".")] if ICON else []
 # `random` imports `hashlib` -- so excluding `_hashlib` drops the .pyd and, with
 # `_ssl` gone too, the 5 MB libcrypto-3.dll behind it, while leaving every import
 # in the stdlib satisfiable. Excluding `hashlib` itself would break `random`.
+# `unicodedata` is not in this list, and was until 0.2.2: `brso.ascii_name` folds
+# an articulation name to the ASCII BRSO stores by normalizing it, so the 1.1 MB
+# .pyd is now load-bearing. Excluding it builds cleanly and fails on the first
+# import at runtime, which is what the smoke check at the end of
+# build_windows.ps1 is there to catch.
 EXCLUDES = [
     "numpy", "PIL", "pytest", "setuptools",
     "_hashlib", "_ssl",          # OpenSSL; takes libcrypto-3.dll with them
     "_socket", "select",         # no networking
     "_bz2", "_lzma",             # no compression
-    "_decimal", "unicodedata",
+    "_decimal",
 ]
 
 COMMON = dict(
