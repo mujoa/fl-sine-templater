@@ -49,9 +49,9 @@ UNEXPECTED_NOTE = (
 # name so a release that adds one still works, and both SINE plugin formats are
 # handled -- so a version not listed here is untested, not refused.
 TESTED_AGAINST = (
-    ("FL Studio", "21.1.1 and 2026 (26.1.6)"),
-    ("SINE Player", "1.3.0  (VST2 and VST3)"),
-    ("BRSO Articulate", "1.17 and 1.33"),
+    ("FL Studio", "26.1.6"),
+    ("SINE Player", "1.4.3"),
+    ("BRSO Articulate", "1.33"),
 )
 
 ABOUT_NOTE = (
