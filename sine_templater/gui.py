@@ -30,6 +30,15 @@ FILETYPES = [("FL Studio project", "*.flp"), ("All files", "*.*")]
 
 COMPACT_LABEL = "Compact mixer (only the inserts each instrument uses)"
 
+# How long the path box has to stop changing before the project in it is loaded.
+# Long enough not to parse a megabyte of SINE state between two keystrokes, short
+# enough that a pasted path loads by the time the hand leaves the keyboard.
+RELOAD_DELAY_MS = 400
+
+UNEXPECTED_NOTE = (
+    "This is a fault in the tool rather than in the project. Nothing was written."
+)
+
 # What the tool was built and tested against, read out of the reference project
 # rather than assumed: FL Studio writes its own version into the .flp, SINE
 # records `samplerVersion` in its state, and BRSO's state carries a format
@@ -105,8 +114,13 @@ class App(ttk.Frame):
         self.folder_var = tk.StringVar()
         self.compact_var = tk.BooleanVar(value=False)
         self.status_var = tk.StringVar(value="Choose a SINE project to begin.")
+        # The project the plan on screen was derived from, and the scheduled load
+        # of whatever the path box says now; see `_input_changed`.
+        self._loaded_input: Path | None = None
+        self._pending_load: str | None = None
 
         self._build_widgets()
+        self.input_var.trace_add("write", self._input_changed)
         self.grid(row=0, column=0, sticky="nsew")
         master.columnconfigure(0, weight=1)
         master.rowconfigure(0, weight=1)
@@ -265,6 +279,21 @@ class App(ttk.Frame):
             for line in lines[1:]:
                 self._append(line + "\n", "error")
 
+    def _show_unexpected(self, exc: Exception, heading: str, *, keep: bool = False) -> None:
+        """A failure that is not a `BuildError`, shown rather than raised.
+
+        `core` turns everything a project can do into a `BuildError`, so reaching
+        here means a bug. Letting it out of a Tk callback would leave the window
+        with a watch cursor, a disabled button and a status line that has stopped
+        being true -- and this is a windowed build, so the traceback goes nowhere
+        anyone can read it. Better the wrong thing on screen than nothing at all.
+        """
+        detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+        self._show_failure(
+            core.BuildError(detail, [UNEXPECTED_NOTE]), heading, keep=keep
+        )
+        self._idle("Something went wrong.")
+
     def _show(self, body: str, tag: Tags = None) -> None:
         self.text.configure(state="normal")
         self.text.delete("1.0", "end")
@@ -410,11 +439,67 @@ class App(ttk.Frame):
         self.status_var.set(message)
         self.master.configure(cursor="")
 
+    def _input_changed(self, *_event) -> None:
+        """The path box is editable, so the plan must never outlive what it says.
+
+        A plan that no longer belongs to the path on screen is worse than no plan
+        at all: Build would render the project that happens to be loaded and save
+        it under the name suggested for that one. So the plan goes as soon as the
+        text stops matching it, and the new path is loaded once typing stops.
+        """
+        self._cancel_pending()
+        if self.preview is not None and self.input_var.get().strip() == str(
+            self._loaded_input or ""
+        ):
+            return
+        self.preview = None
+        self.build_button.configure(state="disabled")
+        self.status_var.set("Loading…")
+        self._pending_load = self.after(RELOAD_DELAY_MS, self._reload)
+
+    def _cancel_pending(self) -> None:
+        if self._pending_load is not None:
+            self.after_cancel(self._pending_load)
+            self._pending_load = None
+
+    def _reload(self) -> None:
+        """Load what the box points at, once it points at something."""
+        self._pending_load = None
+        source = self.input_var.get().strip()
+        if not source:
+            self._show("")
+            self._idle("Choose a SINE project to begin.")
+            return
+        if not Path(source).is_file():
+            self._idle("No file at that path.")
+            return
+        self._refresh()
+
+    def _follow_input(self, previous: Path | None, loaded: Path) -> None:
+        """Keep "Save as" and "Folder" with the project that is loaded.
+
+        Only where they still hold what was suggested for the previous one: a name
+        the user typed is theirs to keep, and loading another project is not a
+        reason to take it away.
+
+        Both paths are resolved first: a relative one typed into the box has no
+        parent to offer the Folder field, and the window needs somewhere real to
+        write to.
+        """
+        previous = previous.resolve() if previous else None
+        loaded = loaded.resolve()
+        name, folder = self.name_var.get().strip(), self.folder_var.get().strip()
+        if not name or (previous and name == core.default_output_name(previous)):
+            self.name_var.set(core.default_output_name(loaded))
+        if not folder or (previous and folder == str(previous.parent)):
+            self.folder_var.set(str(loaded.parent))
+
     def _refresh(self) -> None:
         """Re-derive the plan and show it. Reads only -- nothing is written."""
         source = self.input_var.get().strip()
         if not source:
             return
+        self._cancel_pending()
         self.preview = None
         self.build_button.configure(state="disabled")
         self._busy("Reading the project…")
@@ -424,7 +509,12 @@ class App(ttk.Frame):
             self._show_failure(exc, "This project cannot be used as it stands")
             self._idle("The project cannot be used as it stands.")
             return
+        except Exception as exc:  # noqa: BLE001 - see _show_unexpected
+            self._show_unexpected(exc, "This project could not be read")
+            return
 
+        self._follow_input(self._loaded_input, preview.input_path)
+        self._loaded_input = preview.input_path
         self.preview = preview
         warnings = preview.warnings
         self._show_plan(
@@ -480,6 +570,10 @@ class App(ttk.Frame):
             self._idle("Nothing was written.")
             self.build_button.configure(state="normal")
             messagebox.showerror("Not written", str(exc))
+            return
+        except Exception as exc:  # noqa: BLE001 - see _show_unexpected
+            self._show_unexpected(exc, "Not written", keep=True)
+            self.build_button.configure(state="normal")
             return
 
         self._append("\n  ✔  Written\n", "good")

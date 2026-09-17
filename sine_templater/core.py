@@ -33,6 +33,16 @@ def default_output_name(input_path: Path | str) -> str:
     return Path(input_path).stem + OUTPUT_SUFFIX + ".flp"
 
 
+def _message(exc: Exception) -> str:
+    """An exception as a line of text, including the ones that carry none.
+
+    A truncated file fails on a `struct.error` or an `IndexError` raised deep in
+    a codec, and an `IndexError` in particular often says nothing at all -- which
+    would reach the user as a dialog with an empty body.
+    """
+    return str(exc) or exc.__class__.__name__
+
+
 class BuildError(Exception):
     """A failure the user is meant to read, not a traceback.
 
@@ -143,17 +153,27 @@ def preview(
     colors_file = Path(colors_file) if colors_file is not None else resolve_colors_file()
     try:
         colors = plan_mod.load_channel_colors(colors_file)
-    except (ValueError, KeyError) as exc:
-        raise BuildError(str(exc)) from exc
+    except flp.CODEC_ERRORS as exc:
+        raise BuildError(_message(exc)) from exc
     try:
         data = input_path.read_bytes()
     except OSError as exc:
         raise BuildError(f"cannot read {input_path}: {exc}") from exc
     try:
         project = flp.parse(data)
+    except flp.CODEC_ERRORS as exc:
+        # Separate from `derive` below: everything that one refuses is a project
+        # this tool can read and will not build from, and says so in its own
+        # words. Failing here means the bytes are not a project at all -- a
+        # truncated file, or something that is not an .flp -- and the codec that
+        # noticed has only its own low-level complaint to offer.
+        raise BuildError(
+            f"{input_path} is not a project this tool can read: {_message(exc)}"
+        ) from exc
+    try:
         derived = plan_mod.derive(project, compact=compact, colors=colors)
-    except (ValueError, KeyError) as exc:
-        raise BuildError(str(exc)) from exc
+    except flp.CODEC_ERRORS as exc:
+        raise BuildError(_message(exc)) from exc
     return Preview(input_path, project, derived, colors_file, len(colors))
 
 
@@ -165,9 +185,9 @@ def render(pv: Preview) -> bytes:
     """
     try:
         data = flp.serialize(apply_mod.apply(pv.project, pv.plan))
-    except (ValueError, KeyError) as exc:
-        raise BuildError(str(exc)) from exc
-    problems = validate.check(data, pv.plan)
+        problems = validate.check(data, pv.plan)
+    except flp.CODEC_ERRORS as exc:
+        raise BuildError(_message(exc)) from exc
     if problems:
         raise BuildError("validation failed, nothing written", problems)
     return data

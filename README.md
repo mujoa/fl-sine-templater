@@ -209,13 +209,20 @@ Every refusal names what is wrong. The common ones:
 | needs mixer inserts up to *N*, but FL only has 125 | use the compact layout, or split the project |
 | more than one instrument on MIDI channel(s) *N* | two instruments in one SINE instance share a MIDI channel; change one in SINE |
 | on MIDI channel *N*; only 1..16 are supported | SINE addresses 16 MIDI channels per instance |
+| channel *N* ... is a plugin channel whose state is not a SINE Player's | the project holds another plugin; the input takes SINE instances and the BRSO donor and nothing else |
+| *file* is not a project this tool can read | the file is truncated, or is not an `.flp` |
 | *file* exists | choose another name, or pass `--force` |
 | refusing to write over the input file | the input is never overwritten, on purpose |
 
-One thing is reported as a warning rather than a refusal: if two articulations of the
-same instrument carry the same keyswitch note in SINE, both grid cells answer to that
-note and only the first one can be selected. The template is still written; fix it in
-SINE if it matters.
+Two things are reported as warnings rather than refusals:
+
+* two articulations of the same instrument carrying the same keyswitch note in SINE.
+  Both grid cells answer to that note and only the first one can be selected.
+* an articulation name BRSO cannot store as it stands. Its cells are plain ASCII, so
+  `Legato – slow` goes in as `Legato - slow` and an accent is written without it.
+
+The template is written either way, and the warning says exactly what it found; fix
+it in SINE if it matters.
 
 ## Re-running
 

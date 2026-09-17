@@ -24,6 +24,7 @@ safe to locate by parsing rather than by offset.
 from __future__ import annotations
 
 import struct
+import unicodedata
 from dataclasses import dataclass, field
 
 VERSION = 10
@@ -82,12 +83,45 @@ class BrsoState:
         return [(i, ks[i], self.names[i]) for i in range(self.cells) if ks[i] != EMPTY]
 
 
+# Typographic characters a name picked up from a library or a copy-paste actually
+# carries, and what they become in an ASCII-only field. Everything else is folded
+# by `ascii_name` with NFKD, which turns an accented letter into its plain one.
+_ASCII_SUBSTITUTIONS = {
+    "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-",
+    "―": "-", "‘": "'", "’": "'", "‚": "'", "‛": "'",
+    "“": '"', "”": '"', "„": '"', "…": "...", "•": "*",
+    "·": ".", "×": "x", "÷": "/", "«": '"', "»": '"',
+}
+
+
+def ascii_name(value: str) -> str:
+    """`value` as BRSO can store it: ASCII, and as close to the original as that gets.
+
+    Articulation and bank names are the one place in a template that is not
+    Unicode -- BRSO writes them as plain bytes, and FL's own fields around them
+    are UTF-16. Encoding them with `replace` alone would turn a dash into `?` and
+    leave the tool comparing the name it meant to write against the one it did,
+    so the substitution happens once, here, and both sides use the result.
+    """
+    mapped = "".join(_ASCII_SUBSTITUTIONS.get(char, char) for char in value)
+    folded = unicodedata.normalize("NFKD", mapped)
+    stripped = "".join(char for char in folded if not unicodedata.combining(char))
+    return stripped.encode("ascii", "replace").decode("ascii")
+
+
 def _read_pascal(data: bytes, pos: int, count: int) -> tuple[list[str], int]:
     out = []
     for _ in range(count):
         (length,) = struct.unpack_from("<H", data, pos)
         pos += 2
-        out.append(data[pos : pos + length].decode("ascii"))
+        raw = data[pos : pos + length]
+        try:
+            out.append(raw.decode("ascii"))
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                f"BRSO name {raw!r} is not ASCII, which is the only encoding this "
+                f"format has been seen to use; the state may be from a newer BRSO"
+            ) from exc
         pos += length
     return out, pos
 
@@ -95,7 +129,15 @@ def _read_pascal(data: bytes, pos: int, count: int) -> tuple[list[str], int]:
 def _write_pascal(values: list[str]) -> bytes:
     out = bytearray()
     for value in values:
-        encoded = value.encode("ascii", "replace")
+        try:
+            encoded = value.encode("ascii")
+        except UnicodeEncodeError as exc:
+            # Names reach here through `ascii_name`, so this is a wiring fault
+            # rather than something the project can cause.
+            raise ValueError(
+                f"BRSO names are ASCII and {value!r} is not; it should have gone "
+                f"through ascii_name()"
+            ) from exc
         out += struct.pack("<H", len(encoded)) + encoded
     return bytes(out)
 

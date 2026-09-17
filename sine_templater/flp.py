@@ -46,6 +46,14 @@ CHAN_INSERT_EVENTS = (EV_CHAN_INSERT, EV_CHAN_INSERT_WIDE)
 # `parse` insists on landing exactly on the end of the chunk.
 EXPLICIT_WIDTHS = {172: 3}
 
+# What a file that is not shaped the way this tool expects raises on its way
+# through the codecs: a short buffer or a bad length from `struct`, an index past
+# the end of the data, a missing chunk or JSON key, and every explicit `ValueError`
+# raised here and in the plugin codecs. Caught as one tuple wherever a whole parse
+# is attempted, so a corrupt project reaches the user as a message rather than a
+# traceback. `UnicodeDecodeError` and `json.JSONDecodeError` are both `ValueError`.
+CODEC_ERRORS = (ValueError, KeyError, IndexError, struct.error)
+
 
 def payload_width(eid: int) -> int | None:
     """Fixed payload width for an event id, or None when the payload is length-prefixed."""

@@ -2,8 +2,11 @@
 
 Four passes, ordered so that no pass invalidates positions the next one needs:
 
-1. SINE channel edits     -- in place, event count unchanged
-2. donor -> BRSO channels -- a slice replacement at the end of the channel region
+1. donor -> BRSO channels -- a slice replacement at the end of the channel region,
+   which is where the donor is required to be, so the SINE blocks ahead of it keep
+   the event positions the plan was derived from
+2. SINE channel edits     -- a slice replacement per block, last block first, since
+   a block that gains a color or group event moves everything after it
 3. mixer rewrite          -- creates the inserts the plan needs and the project
    does not have, then a stateful walk, so it needs no precomputed positions
    (it may insert name and color events for inserts that have none)
@@ -26,10 +29,10 @@ def apply(project: flp.Project, plan: plan_mod.Plan) -> flp.Project:
     events: Events = list(project.events)
     donor_events = events[donor.span]
 
-    _rewrite_sine_channels(events, blocks, plan)
-
     generated = _build_brso_channels(donor_events, plan)
     events = events[: donor.start] + generated + events[donor.end + 1 :]
+
+    _rewrite_sine_channels(events, blocks, plan)
 
     events = _rewrite_mixer(events, plan)
     events = _rewrite_filter_groups(events, plan)
@@ -42,39 +45,7 @@ def apply(project: flp.Project, plan: plan_mod.Plan) -> flp.Project:
     )
 
 
-# --- pass 1: SINE channels -------------------------------------------------
-
-def _rewrite_sine_channels(events: Events, blocks, plan: plan_mod.Plan) -> None:
-    for instance in plan.instances:
-        block = blocks[instance.channel_index]
-        buses = {i.midi_channel: i.bus for i in instance.instruments}
-        for position in range(block.start, block.end + 1):
-            eid, payload = events[position]
-            if eid in flp.CHAN_INSERT_EVENTS:
-                # The channel sits on its section bus, and every plugin output
-                # offset is measured from there.
-                events[position] = (eid, _insert_payload(eid, instance.bus_insert))
-            elif eid == flp.EV_CHAN_COLOR:
-                events[position] = (eid, flp.encode_color(instance.color))
-            elif eid == flp.EV_CHAN_GROUP:
-                events[position] = (eid, struct.pack("<I", instance.port))
-            elif eid == flp.EV_PLUGIN_STATE:
-                events[position] = (eid, _rewrite_sine_state(payload, instance, buses))
-
-
-def _rewrite_sine_state(payload: bytes, instance, buses: dict[int, int]) -> bytes:
-    kind, chunks = wrapper.parse(payload)
-    chunks = wrapper.set_midi_port(chunks, instance.port)
-    outputs = len(wrapper.output_offsets(chunks))
-    chunks = wrapper.set_output_offsets(chunks, instance.output_offsets(outputs))
-    state = sine.parse(wrapper.get_chunk(chunks, wrapper.CHUNK_VST_STATE))
-    for instrument in state.instruments:
-        sine.set_output_bus(instrument, buses[int(instrument["midiChannel"])])
-    chunks = wrapper.set_chunk(chunks, wrapper.CHUNK_VST_STATE, sine.serialize(state))
-    return wrapper.serialize(kind, chunks)
-
-
-# --- pass 2: generated BRSO channels ---------------------------------------
+# --- pass 1: generated BRSO channels ---------------------------------------
 
 def _build_brso_channels(donor_events: Events, plan: plan_mod.Plan) -> Events:
     out: Events = []
@@ -103,6 +74,49 @@ def _build_brso_channels(donor_events: Events, plan: plan_mod.Plan) -> Events:
     return out
 
 
+# --- pass 2: SINE channels -------------------------------------------------
+
+def _rewrite_sine_channels(events: Events, blocks, plan: plan_mod.Plan) -> None:
+    """Point each SINE channel at its section bus, color it, and group it.
+
+    Rewritten last block first: a block with no color or group event of its own
+    gains one, which moves every event after it, and the blocks still to be done
+    are the ones in front.
+    """
+    ordered = sorted(plan.instances, key=lambda i: i.channel_index, reverse=True)
+    for instance in ordered:
+        block = blocks[instance.channel_index]
+        buses = {i.midi_channel: i.bus for i in instance.instruments}
+        rewritten: Events = []
+        for eid, payload in events[block.span]:
+            if eid in flp.CHAN_INSERT_EVENTS:
+                # The channel sits on its section bus, and every plugin output
+                # offset is measured from there.
+                payload = _insert_payload(eid, instance.bus_insert)
+            elif eid == flp.EV_CHAN_COLOR:
+                payload = flp.encode_color(instance.color)
+            elif eid == flp.EV_CHAN_GROUP:
+                payload = struct.pack("<I", instance.port)
+            elif eid == flp.EV_PLUGIN_STATE:
+                payload = _rewrite_sine_state(payload, instance, buses)
+            rewritten.append((eid, payload))
+        events[block.span] = _with_color_and_group(
+            rewritten, color=instance.color, group=instance.port
+        )
+
+
+def _rewrite_sine_state(payload: bytes, instance, buses: dict[int, int]) -> bytes:
+    kind, chunks = wrapper.parse(payload)
+    chunks = wrapper.set_midi_port(chunks, instance.port)
+    outputs = len(wrapper.output_offsets(chunks))
+    chunks = wrapper.set_output_offsets(chunks, instance.output_offsets(outputs))
+    state = sine.parse(wrapper.get_chunk(chunks, wrapper.CHUNK_VST_STATE))
+    for instrument in state.instruments:
+        sine.set_output_bus(instrument, buses[int(instrument["midiChannel"])])
+    chunks = wrapper.set_chunk(chunks, wrapper.CHUNK_VST_STATE, sine.serialize(state))
+    return wrapper.serialize(kind, chunks)
+
+
 def _insert_payload(eid: int, insert: int) -> bytes:
     """A channel's mixer insert, in the width the event id it was found under uses.
 
@@ -110,6 +124,29 @@ def _insert_payload(eid: int, insert: int) -> bytes:
     saved with rather than being converted either way.
     """
     return insert.to_bytes(flp.payload_width(eid), "little")
+
+
+def _with_color_and_group(block: Events, *, color: int, group: int) -> Events:
+    """Add the color and filter-group events a channel block may not carry.
+
+    FL writes no event for something it has nothing to say about, so a channel
+    that was never colored has no color event and one never put in a filter group
+    has no group event -- and rewriting events that are not there would leave the
+    channel gray and in the first section's group. Both are added just before the
+    event that closes the block; FL reads a block by event id, not by position.
+    """
+    wanted = (
+        (flp.EV_CHAN_COLOR, flp.encode_color(color)),
+        (flp.EV_CHAN_GROUP, struct.pack("<I", group)),
+    )
+    present = {eid for eid, _ in block}
+    missing = [event for event in wanted if event[0] not in present]
+    if not missing:
+        return block
+    end = next(
+        (i for i, (eid, _) in enumerate(block) if eid == flp.EV_CHAN_END), len(block)
+    )
+    return block[:end] + missing + block[end:]
 
 
 def _clone_channel(donor_events: Events, *, index, name, state, color, group) -> Events:
@@ -130,7 +167,7 @@ def _clone_channel(donor_events: Events, *, index, name, state, color, group) ->
         elif eid in flp.CHAN_INSERT_EVENTS:
             payload = _insert_payload(eid, 0)   # BRSO produces no audio
         cloned.append((eid, payload))
-    return cloned
+    return _with_color_and_group(cloned, color=color, group=group)
 
 
 # --- pass 4: channel rack filter groups (runs last; see module docstring) ---

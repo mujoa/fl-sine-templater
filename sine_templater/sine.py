@@ -99,15 +99,22 @@ class SineState:
 def _split_json(body: bytes) -> tuple[dict, bytes]:
     """Decode the JSON document at the start of `body`, returning it and the rest.
 
-    SINE writes the JSON as ASCII, so the decoder's character offset is also a
-    byte offset and the binary trailer that may follow is never misread.
+    The decoder works in characters and `body` is bytes, so the end of the JSON is
+    converted back to a byte offset before the trailer is cut. One non-ASCII
+    character anywhere in the document -- a typed instance name, an accented
+    instrument title -- would otherwise leave the tail of the JSON in the
+    "trailer" and see it appended again after the rewritten body.
+
+    `surrogateescape` is what makes that conversion exact: the JSON is UTF-8, but
+    whatever follows it is binary, and this is the one error handler that decodes
+    arbitrary bytes and re-encodes to the same bytes.
     """
     start = body.find(b"{")
     if start < 0:
         raise UnsupportedContainer("no JSON object found in the SINE state")
-    text = body[start:].decode("utf-8", errors="replace")
+    text = body[start:].decode("utf-8", errors="surrogateescape")
     data, end = json.JSONDecoder().raw_decode(text)
-    end += start
+    end = start + len(text[:end].encode("utf-8", "surrogateescape"))
     if body[end : end + 1] == b"\n":
         end += 1
     return data, body[end:]

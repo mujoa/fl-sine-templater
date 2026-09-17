@@ -228,9 +228,10 @@ ARTICULATION_COLORS = [4, 10, 28, 55, 90, 120, 150, 180, 210, 231, 40, 70, 100, 
 
 @dataclass
 class ArticulationPlan:
-    title: str
+    title: str                 # as BRSO stores it: ASCII, see brso.ascii_name
     keyswitch: int
     color: int
+    source_title: str = ""     # SINE's own title, when the fold changed it
 
 
 @dataclass
@@ -376,7 +377,7 @@ def derive(
 
     instances = []
     for port, block in enumerate(sine_blocks):
-        state = sine.parse(_vst_state(project, block))
+        state = _sine_state(project, block)
         plan = InstancePlan(
             channel_index=block.index,
             name=block.name,
@@ -397,7 +398,8 @@ def derive(
                 )
             arts = [
                 ArticulationPlan(
-                    title=title,
+                    title=brso.ascii_name(title),
+                    source_title=title,
                     keyswitch=keyswitch,
                     color=ARTICULATION_COLORS[i % len(ARTICULATION_COLORS)],
                 )
@@ -463,9 +465,27 @@ def _assign_inserts(
         )
 
 
-def _vst_state(project: flp.Project, block: model.ChannelBlock) -> bytes:
-    _, chunks = wrapper.parse(model.plugin_state(project, block))
-    return wrapper.get_chunk(chunks, wrapper.CHUNK_VST_STATE)
+def _sine_state(project: flp.Project, block: model.ChannelBlock) -> sine.SineState:
+    """The SINE state of a wrapped channel, or a message saying it is not SINE.
+
+    `model.is_sine` can only tell that a channel is a VST in FL's wrapper -- the
+    hosted plugin's identity is inside the state, not beside it. So any VST
+    channel reaches this point, and a Kontakt or a synth would otherwise fail
+    somewhere down in the codecs with "wrapper chunk 53 not present". This is
+    where a channel that is not a SINE Player is named as such.
+    """
+    try:
+        _, chunks = wrapper.parse(model.plugin_state(project, block))
+        state = sine.parse(wrapper.get_chunk(chunks, wrapper.CHUNK_VST_STATE))
+        if "instruments" not in state.data:
+            raise ValueError("the hosted plugin's state carries no instrument list")
+    except flp.CODEC_ERRORS as exc:
+        raise ValueError(
+            f"channel {block.index + 1} {block.name!r} is a plugin channel whose state "
+            f"is not a SINE Player's ({exc}). The input should hold only SINE Player "
+            f"instances plus one empty BRSO Articulate as the last channel."
+        ) from exc
+    return state
 
 
 def _duplicate_channels(plan: InstancePlan) -> list[int]:

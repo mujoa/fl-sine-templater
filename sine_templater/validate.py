@@ -69,7 +69,10 @@ def check(data: bytes, plan: plan_mod.Plan) -> list[str]:
         if key not in wanted:
             problems.append(f"BRSO {block.name!r} targets unplanned port/channel {key}")
             continue
-        _, instrument = wanted[key]
+        owner, instrument = wanted[key]
+        problems += _channel_appearance(
+            project, block, color=owner.color, group=owner.port
+        )
         expected = [(a.title, a.keyswitch) for a in instrument.articulations]
         actual = [(name, ks) for _, ks, name in state.used_cells()]
         if actual != expected:
@@ -87,7 +90,16 @@ def check(data: bytes, plan: plan_mod.Plan) -> list[str]:
             problems.append(f"no BRSO channel generated for {instrument.title!r} (port/channel {key})")
 
     for instance in plan.instances:
-        block = next(b for b in blocks if b.name == instance.name and model.is_sine(b))
+        block = _sine_block(blocks, instance)
+        if block is None:
+            problems.append(
+                f"channel {instance.channel_index + 1} should be the SINE instance "
+                f"{instance.name!r} and is not; the output does not match the plan"
+            )
+            continue
+        problems += _channel_appearance(
+            project, block, color=instance.color, group=instance.port
+        )
         _, chunks = wrapper.parse(model.plugin_state(project, block))
         port = wrapper.get_midi_port(chunks)
         if port != instance.port:
@@ -160,8 +172,14 @@ def warnings(plan: plan_mod.Plan) -> list[str]:
     They are copied through verbatim, but in BRSO both cells then answer to that
     note and only the first is reachable. That is the SINE instrument's own doing,
     not a wiring fault, so it is reported and the template is still written.
+
+    The other one is a name BRSO cannot store as it stands: its cells are ASCII,
+    so an en dash or an accent is folded to its plain equivalent. The template is
+    correct either way, but the name in the piano roll is not quite the one in
+    SINE, which is worth knowing before wondering why.
     """
     out: list[str] = []
+    out += _folded_names(plan)
     for instance in plan.instances:
         for instrument in instance.instruments:
             by_note: dict[int, list[str]] = {}
@@ -180,6 +198,25 @@ def warnings(plan: plan_mod.Plan) -> list[str]:
                 f"articulations on {len(by_note)} keyswitch notes; where a note is "
                 f"shared, only the first articulation on it can be selected -- {detail}"
             )
+    return out
+
+
+def _folded_names(plan: plan_mod.Plan) -> list[str]:
+    """Articulation names BRSO's ASCII cells could not hold verbatim."""
+    out: list[str] = []
+    for instance, instrument in plan.instruments:
+        folded = [
+            a for a in instrument.articulations
+            if a.source_title and a.source_title != a.title
+        ]
+        if not folded:
+            continue
+        detail = "; ".join(f"{a.source_title!r} -> {a.title!r}" for a in folded)
+        out.append(
+            f"{instance.name!r} / {instrument.title!r} (MIDI channel "
+            f"{instrument.midi_channel}): BRSO stores articulation names as ASCII, so "
+            f"{len(folded)} name(s) are written with plain characters -- {detail}"
+        )
     return out
 
 
@@ -295,6 +332,60 @@ def _layout_conflicts(plan: plan_mod.Plan) -> list[str]:
                 )
             taken.setdefault(instrument.insert, instrument.title)
     return problems
+
+
+def _sine_block(
+    blocks: list[model.ChannelBlock], instance: plan_mod.InstancePlan
+) -> model.ChannelBlock | None:
+    """An instance's own channel, found by position rather than by name.
+
+    Two SINE instances can carry the same display name -- FL gives every one it
+    adds the same default -- so a lookup by name would check both against the
+    first block and report the second's port, insert and routing as wrong. The
+    plan carries the channel's index for exactly this, and `apply` leaves the
+    SINE channels where it found them.
+    """
+    if not 0 <= instance.channel_index < len(blocks):
+        return None
+    block = blocks[instance.channel_index]
+    return block if model.is_sine(block) else None
+
+
+def _channel_appearance(
+    project: flp.Project, block: model.ChannelBlock, *, color: int, group: int
+) -> list[str]:
+    """A channel's rack color and filter group.
+
+    FL writes neither event for a channel that has never had one, so on a donor
+    without them the generated channels would come out gray and all in the first
+    section's group -- visible at a glance in the rack, and nothing else here
+    looks at them.
+    """
+    problems: list[str] = []
+    payload = _channel_event(project, block, flp.EV_CHAN_COLOR)
+    actual = flp.decode_color(payload) if payload is not None else None
+    if actual != color:
+        problems.append(
+            f"channel {block.name!r} color is "
+            f"{'unset' if actual is None else actual}, expected {color}"
+        )
+    payload = _channel_event(project, block, flp.EV_CHAN_GROUP)
+    actual = int.from_bytes(payload, "little") if payload is not None else None
+    if actual != group:
+        problems.append(
+            f"channel {block.name!r} is in filter group "
+            f"{'none' if actual is None else actual}, expected {group}"
+        )
+    return problems
+
+
+def _channel_event(
+    project: flp.Project, block: model.ChannelBlock, eid: int
+) -> bytes | None:
+    for event_id, payload in project.events[block.span]:
+        if event_id == eid:
+            return payload
+    return None
 
 
 def _channel_insert(project: flp.Project, block: model.ChannelBlock) -> int | None:

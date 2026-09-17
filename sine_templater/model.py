@@ -7,7 +7,6 @@ from . import flp
 
 WRAPPER_FRUITY = "Fruity Wrapper"
 WRAPPER_BRSO = "BRSO Articulate"
-SINE_PLUGIN_NAMES = ("SINE Player",)
 
 
 @dataclass
@@ -49,6 +48,14 @@ def channel_blocks(project: flp.Project) -> list[ChannelBlock]:
 
 
 def is_sine(block: ChannelBlock) -> bool:
+    """True for a channel hosted in FL's VST wrapper, which is how SINE appears.
+
+    A channel block says which wrapper holds it, not which plugin: every VST goes
+    in the Fruity Wrapper, and `name` is the display name, which the user is free
+    to change. So this is as far as the event stream can tell us, and the plugin's
+    identity is settled by reading its state -- `plan._sine_state`, which names the
+    channel if it turns out not to be a SINE Player.
+    """
     return block.wrapper == WRAPPER_FRUITY
 
 
