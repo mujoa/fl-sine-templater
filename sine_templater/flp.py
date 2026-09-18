@@ -23,6 +23,7 @@ EV_CHAN_COLOR = 128
 EV_CHAN_ORDINAL = 132     # two uint16, both = channel index + 1
 EV_CHAN_GROUP = 145       # channel rack filter group (index into the group name list)
 EV_CHAN_GROUP_NAME = 231  # one per filter group, in index order, before the channels
+EV_REGNAME = 200          # the registration of whichever FL installation last saved
 EV_WRAPPER_NAME = 201     # "Fruity Wrapper" / "BRSO Articulate"
 EV_PLUGIN_NAME = 203      # channel display name
 EV_PLUGIN_STATE = 213

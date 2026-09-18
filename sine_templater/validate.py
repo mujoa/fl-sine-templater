@@ -16,6 +16,7 @@ def check(data: bytes, plan: plan_mod.Plan) -> list[str]:
         return problems
 
     problems += _mixer_size(project, plan)
+    problems += _registration(project)
 
     blocks = model.channel_blocks(project)
     names = _insert_names(project)
@@ -422,3 +423,19 @@ def _insert_names(project: flp.Project) -> dict[int, str]:
         insert: flp.decode_text(project.events[position][1])
         for insert, position in positions.items()
     }
+
+
+def _registration(project: flp.Project) -> list[str]:
+    """The registration stamp must have been emptied; see apply._blank_registration."""
+    stamped = [
+        flp.decode_text(payload)
+        for eid, payload in project.events
+        if eid == flp.EV_REGNAME and flp.decode_text(payload)
+    ]
+    if stamped:
+        return [
+            "the registration stamp (event 200) still carries a value; it must be "
+            "emptied so a generated template does not carry the registration of "
+            "whoever built it"
+        ]
+    return []

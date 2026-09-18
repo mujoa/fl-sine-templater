@@ -1,6 +1,6 @@
 """Turn a Plan into a mutated project. Only touches what the plan describes.
 
-Four passes, ordered so that no pass invalidates positions the next one needs:
+Five passes, ordered so that no pass invalidates positions the next one needs:
 
 1. donor -> BRSO channels -- a slice replacement at the end of the channel region,
    which is where the donor is required to be, so the SINE blocks ahead of it keep
@@ -12,6 +12,8 @@ Four passes, ordered so that no pass invalidates positions the next one needs:
    (it may insert name and color events for inserts that have none)
 4. filter groups          -- also a walk; it changes offsets ahead of the channels,
    so nothing position-based may follow it
+5. registration stamp     -- a flat map over the events, so position-independent,
+   which is why it is safe to run after the pass that moves everything
 """
 from __future__ import annotations
 
@@ -36,6 +38,7 @@ def apply(project: flp.Project, plan: plan_mod.Plan) -> flp.Project:
 
     events = _rewrite_mixer(events, plan)
     events = _rewrite_filter_groups(events, plan)
+    events = _blank_registration(events)
 
     return flp.Project(
         fmt=project.fmt,
@@ -170,7 +173,7 @@ def _clone_channel(donor_events: Events, *, index, name, state, color, group) ->
     return _with_color_and_group(cloned, color=color, group=group)
 
 
-# --- pass 4: channel rack filter groups (runs last; see module docstring) ---
+# --- pass 4: channel rack filter groups (last of the positional passes) -----
 
 def _rewrite_filter_groups(events: Events, plan: plan_mod.Plan) -> Events:
     """Define one filter group per SINE instance, in port order.
@@ -347,3 +350,31 @@ def _rewrite_mixer(events: Events, plan: plan_mod.Plan) -> Events:
     if pending is not None:
         out.append(pending)
     return out
+
+
+# --- pass 5: the registration stamp ----------------------------------------
+
+def _blank_registration(events: Events) -> Events:
+    """Empty the registration string the input was stamped with.
+
+    FL writes event 200 on every save, carrying the registration of the installation
+    that saved the project. Copied through untouched, it would mean a template built
+    for somebody else still carries the registration of whoever generated it.
+
+    Emptying it costs nothing, because FL does not read the field back: a project
+    whose event 200 is empty -- or missing outright -- opens, renders and saves, and
+    that save rewrites the field with the saving installation's own value. So the
+    recipient's copy is stamped with the recipient's registration the first time they
+    touch it, which is what it should have said all along.
+
+    An empty payload rather than a deleted event, for two reasons: it is the shape FL
+    itself writes for every other empty text field, and it is the shape FL restores a
+    deleted event to anyway.
+
+    The project author, event 207, is deliberately left alone. FL does not rewrite
+    that one on save, so whatever an input carries there was put there on purpose.
+    """
+    blank = flp.encode_text("")
+    return [
+        (eid, blank if eid == flp.EV_REGNAME else payload) for eid, payload in events
+    ]

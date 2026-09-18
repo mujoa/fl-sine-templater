@@ -226,6 +226,21 @@ Two things are reported as warnings rather than refusals:
 The template is written either way, and the warning says exactly what it found; fix
 it in SINE if it matters.
 
+## What the tool clears
+
+FL stamps every project it saves with the registration of the installation that
+saved it. Left alone it would travel with the file, so **the generated template
+has that stamp emptied**. Nothing is lost by it: FL does not read the field back,
+and the first time anyone opens and saves the template, FL writes their own
+registration into it — which is what it should say anyway.
+
+The **project author** is left exactly as the input had it. FL does not rewrite
+that one on save, so a name there was put there deliberately. If you do not want
+your name on a template you hand to someone else, clear it in FL's project info
+before building, or in the template afterwards.
+
+Nothing else in the project is touched that the plan does not describe.
+
 ## Re-running
 
 Swapping an instrument is: change it in SINE, save, run the tool again on the source

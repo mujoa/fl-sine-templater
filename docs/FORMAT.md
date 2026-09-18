@@ -109,6 +109,7 @@ Event ids that matter:
 | 64 | new channel (index) |
 | 22 | channel → mixer insert, one byte, FL 21 and earlier (SINE = its block base; BRSO = 0) |
 | 104 | the same field from FL 2026 on: two bytes, so it can address 500 inserts |
+| 200 | registration stamp — see below |
 | 103 | FL 2026 only: how many insert blocks the mixer carries |
 | 145 | channel filter-group index (0–5) — *not* the MIDI port |
 | 128 | channel color — bytes `R, G, B, 0`; see below |
@@ -153,6 +154,30 @@ to the position in the SORTED list, not the order the names appear in the file.*
 and every filter is mislabeled. This is why generated group names are numbered — `01 …`, `02 …`, in port order — which
 makes sorted order equal index order. Prefix the names, or assign indices by sorted
 rank.
+
+### The registration stamp (event 200)
+
+Sixteen obfuscated characters, UTF-16 with a terminator, 34 bytes, appearing exactly
+once at event index 4 and nowhere else in the file. It is **identical across every
+project saved by the same FL installation**, so it fingerprints the installation
+rather than the project.
+
+What it is not is load-bearing. Tested in FL Studio against a generated template, in
+three shapes — the payload emptied, the event deleted outright, and the payload
+replaced with sixteen zeros. All three opened, rendered to MP3 and saved without a
+warning of any kind.
+
+**FL rewrites the field on every save**, with its own registration, at the same event
+index — including in the variant where the event had been deleted, which FL
+re-created from scratch. So the stamp records whoever saved a project last, and a
+file handed to someone else is re-stamped with theirs the moment they save it.
+
+That is why the tool empties it rather than deleting it: an empty text payload is the
+shape FL writes for every other empty text field, and the shape it normalizes a
+deleted event back to.
+
+The project author, event 207, behaves differently and is left alone: FL does *not*
+rewrite it on save, so it persists across saves until somebody edits it by hand.
 
 ### Fruity Wrapper state (event 213 on a SINE channel)
 

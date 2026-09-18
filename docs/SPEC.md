@@ -364,7 +364,22 @@ Every wrapper chunk-32 offset is relative to it, so if this is wrong the whole b
   and re-routes. From FL 2026 the mixer is only as large as the project made it, so `apply`
   appends insert blocks and raises the count in event 103 when the layout needs more.
 
-### 5. Write-out
+### 5. Project metadata
+
+Event 200 is FL's registration stamp: the registration of whichever installation
+last saved the project. It is emptied on write — an empty text payload, not a
+deleted event — so a template does not carry the registration of whoever generated
+it. The field is not load-bearing: a project whose event 200 is empty, or missing
+altogether, opens, renders and saves, and the save puts the saving installation's
+own registration back. Confirmed in FL Studio on all three shapes; see `FORMAT.md`.
+
+Event 207, the project author, is **not** touched. FL does not rewrite it on save,
+so unlike the stamp it survives indefinitely, which means a value there is a
+deliberate act by whoever set it and not ours to discard.
+
+`validate` refuses to write an output whose stamp still carries a value.
+
+### 6. Write-out
 
 Re-serialize the whole FLP. The parser round-trips both reference files byte-for-byte, so any
 diff in the output is a change the tool made deliberately.
