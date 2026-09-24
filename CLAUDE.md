@@ -12,7 +12,7 @@ Python 3.10+, standard library only. `pytest` is the single dev dependency.
 | | |
 |---|---|
 | `sine_templater/` | the package (see the pipeline below) |
-| `packaging/` | PyInstaller spec, entry points, icon, Windows build script |
+| `packaging/` | PyInstaller spec, entry points, icon, Windows build script, the macOS launcher and its zip builder |
 | `tests/` | the pytest suite |
 | `docs/FORMAT.md` | verified file-format findings: FLP, Fruity Wrapper, SINE, BRSO |
 | `docs/SPEC.md` | what the tool does — input contract, mixer layouts, decisions, open items |
@@ -49,6 +49,7 @@ python -m sine_templater build input.flp [-o out.flp] [--compact-mixer]
 python -m sine_templater gui
 python -m pytest
 powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
+python packaging\build_macos_zip.py       # the Mac download; no Mac needed
 ```
 
 Console output needs `PYTHONIOENCODING=utf-8`: FLP text is UTF-16-LE and instrument

@@ -24,10 +24,15 @@ The input project is never modified. A new `.flp` is written beside it.
 
 ## What you need
 
-* **FL Studio**, **SINE Player** and **BRSO Articulate**, on Windows.
-* Either the Windows build (`SINE Templater.exe`, no Python needed) or a source
-  checkout with **Python 3.10 or newer**. The tool uses the standard library only,
-  so there is nothing to install.
+* **FL Studio**, **SINE Player** and **BRSO Articulate**.
+* On **Windows**: the build (`SINE Templater.exe`), which needs no Python, or a
+  source checkout with **Python 3.10 or newer**.
+* On **macOS**: the Mac download, which is the same tool as a folder with a
+  `run.command` in it — double-click that and the window opens. There is no Mac
+  executable to download; the script uses the Python on your machine, and offers to
+  help you install one if there is none. See *Running it on a Mac* below.
+
+The tool uses the standard library only, so there is nothing to install either way.
 
 Built and tested against FL Studio 21.1.1 and 2026 (26.1.6), SINE Player 1.3.0 (both
 the VST2 and VST3 versions) and BRSO Articulate 1.17 and 1.33. Other versions are
@@ -264,6 +269,43 @@ The repository carries everything needed to build on it:
   is absent rather than failing, so the skip count tells you what did not run. See
   `tests/paths.py`.
 
+## Running it on a Mac
+
+Unpack the download and **double-click `run.command`**. A Terminal window opens behind
+the SINE Templater window and stays there while the tool is running; closing it closes
+the tool.
+
+The first run may stop and tell you that Python is missing. Python is what the tool is
+written in, and macOS no longer ships a usable copy — Apple's `/usr/bin/python3` is a
+placeholder that asks to install 700 MB of developer tools. So `run.command` offers to
+sort it out:
+
+* if you have **Homebrew**, it offers to install the missing piece with it. This needs
+  no password and touches nothing else;
+* otherwise it offers to **open the Python download page**. Download the macOS
+  installer for the latest release, run it with the default options, come back to the
+  Terminal window and press Return. That installer includes everything the window needs,
+  and it leaves any Python you already have alone.
+
+Answering **no** to either is fine. It prints the address and stops, and you can install
+Python yourself and double-click the file again.
+
+The script never installs Homebrew and never asks for your administrator password. If it
+ever does ask for one, something is wrong and you should not give it.
+
+Two things to expect on a Mac, neither of them a fault:
+
+* macOS may ask whether you are sure about running something downloaded from the
+  internet. That is Gatekeeper, and it applies to anything unsigned;
+* if double-clicking `run.command` does nothing at all, the file lost permission to run
+  when it was unpacked. `chmod +x run.command` in Terminal, once, fixes it.
+
+The command line works the same as on Windows, from the unpacked folder:
+
+```
+python3 -m sine_templater build "MyProject.flp" --dry-run
+```
+
 ## Building the Windows executables
 
 ```
@@ -283,6 +325,20 @@ script did. The result is `dist\SINE Templater\`, holding
 Zip that folder to hand it to someone else. The script starts both executables before
 calling the build good, so a trimmed build that no longer runs fails there rather than
 on somebody else's machine.
+
+## Building the Mac download
+
+```
+python packaging\build_macos_zip.py
+```
+
+Writes `dist\SINE Templater macOS.zip`: the package, `run.command`, `LICENSE` and
+`README.md` under one folder. Nothing is frozen and nothing is compiled, so this builds
+on Windows.
+
+Build it with the script rather than by zipping the folder by hand. A zip written by
+Windows Explorer does not carry Unix permissions, and `run.command` then arrives on the
+Mac unable to run — double-clicking it does nothing, with no error to explain why.
 
 ## License
 

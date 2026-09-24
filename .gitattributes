@@ -1,0 +1,4 @@
+# The macOS launcher is a shell script, and it is built and shipped from Windows.
+# `#!/bin/sh\r` is not a program any Mac has, and the error it gives names a file
+# that is plainly there -- so the checkout must keep LF whatever the platform does.
+*.command text eol=lf

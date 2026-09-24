@@ -4,8 +4,9 @@ Companion to `SPEC.md` (which holds the tool's intent) and `FORMAT.md` (the file
 findings). This document covers the **UI and distribution** question: making the tool usable
 by someone who will not open a terminal.
 
-Picks up SPEC.md "Open items" #6. **The Windows half is built** — see "What exists" below.
-The macOS sections remain analysis.
+Picks up SPEC.md "Open items" #6. **The Windows half is built, and macOS ships as a
+double-clickable launcher** — see "What exists" below. The analysis of a *frozen* Mac app
+(`.dmg`, signing, notarisation) remains analysis; nothing here needs a Mac to build.
 
 ## What exists
 
@@ -219,6 +220,72 @@ double-click — and makes it look like a real program. It does not reach option
 ships: Mac users get the command line, which is the exact situation this work exists to fix.
 It is a reasonable trade only if there are few or no Mac users.
 
+### What shipped for macOS: `run.command`
+
+Option 4 above, built: `packaging/run.command` beside the package, zipped by
+`packaging/build_macos_zip.py`. No Mac was needed to make it and none is needed to rebuild it.
+The script-based `.app` (option 3) was **not** built — it buys an icon and a Dock name, and
+costs the more likely Gatekeeper refusal, since Gatekeeper judges the bundle rather than the
+script inside it. Worth revisiting once a real Mac has confirmed how a quarantined `.command`
+behaves; not worth guessing at beforehand.
+
+**Finding an interpreter is one question, not two.** "Is Python installed?" and "is Tkinter
+installed?" are different states with the same remedy, and a Python that cannot `import
+tkinter` (pyenv, conda, a Homebrew `python` without `python-tk`) is usually not repairable in
+place. So the probe asks the only thing that matters — *can this interpreter open the window?*
+— as `import sys, tkinter` plus a version floor, over these candidates in order:
+
+```
+/Library/Frameworks/Python.framework/Versions/*/bin/python3    python.org
+/opt/homebrew/bin/python3                                      Homebrew, Apple silicon
+/usr/local/bin/python3                                         Homebrew, Intel
+python3 on PATH                                                anything else
+```
+
+`/usr/bin/python3` is **deliberately absent**. It is the Xcode stub: on a Mac without the
+Command Line Tools, *running* it pops a 700 MB install dialog, so probing it is itself the
+damage. Where the tools are present it works but links Tk 8.5, which draws the window badly.
+The PATH entry is compared against it and skipped for the same reason.
+
+**The install branch asks once, and defaults to No.** A bare Return installs nothing.
+
+| | What it does | Password? |
+|---|---|---|
+| Homebrew already installed | `brew install python-tk@<minor>`, the version resolved by asking `brew info` rather than hardcoded | no — brew owns its prefix |
+| No Homebrew | Opens python.org's download page, waits for Return, re-probes | no — they run Apple's installer themselves |
+
+**Homebrew is never installed.** A tool that builds FL Studio templates has no business
+putting a package manager on somebody's machine: it is a third-party `curl | bash`, it wants
+`sudo`, it pulls the Command Line Tools, and it takes minutes.
+
+The python.org route is **assisted rather than unattended** — no `curl` of a `.pkg`, no `sudo
+installer`. Two reasons, and the second is the one that matters: asking a composer for their
+administrator password inside a script they downloaded as a zip is exactly the shape of thing
+they should refuse, and shipping no download URL means there is no pinned version or checksum
+in this repository to go stale. That its installer bundles Tcl/Tk 8.6 is what makes the route
+work at all: **it answers "no Python" and "no Tkinter" in one step**, and leaves any existing
+Python untouched, because the framework build lands beside it and the probe finds it by path —
+no PATH edit, no shell restart.
+
+After either route the script re-probes and opens the window in the same run. Nothing says
+"now run it again".
+
+**The archive is built by a script for one reason: the execute bit.** A zip written by Windows
+Explorer stores no Unix permissions, so `run.command` arrives without `+x` and double-clicking
+does nothing at all — no error, no window. `zipfile` stores the mode in `external_attr`, but
+only honors it if the entry also claims `create_system = 3` (Unix); both are asserted in
+`tests/test_macos_launcher.py`. The same script refuses to build if the launcher has picked up
+CRLF, because `#!/bin/sh\r` is not a program any Mac has and the error names a file that is
+plainly there. `.gitattributes` pins `*.command` to LF so it does not happen in the first
+place.
+
+**Verified on Windows** (`tests/test_macos_launcher.py`, plus running the script under Git
+Bash): `sh -n` syntax, the probe finding an interpreter and exec'ing into the GUI, the
+missing-package branch, the decline branch, the accept-without-Homebrew branch, the zip's
+stored mode and contents. **Unverified, and needing a real Mac:** everything about a Mac —
+Finder actually running the file, what quarantine does to it, whether Archive Utility honors
+the stored mode, and the Homebrew branch, which cannot run where there is no `brew`.
+
 ### Linux — probably drop it
 
 FL Studio has no native Linux build, so nobody who can use this tool's output is running it
@@ -239,9 +306,10 @@ for an audience of approximately zero.
 
 ## Open items
 
-1. **Are there Mac users at all?** FL Studio runs on macOS, so they may exist. If the audience
-   is Windows-only in practice, build one `.exe` and stop — the entire macOS section becomes
-   moot.
+1. ~~Are there Mac users at all?~~ **Settled by building the cheap answer rather than
+   surveying:** `run.command` is a hundred lines and needs no Mac, no CI runner and no $99, so
+   it costs nothing to ship whether or not anyone uses it. The expensive answers — a frozen
+   `.dmg`, signing, notarisation — still wait on knowing there is an audience for them.
 2. **Is a Mac or macOS CI runner available?** Without one, no frozen `.dmg` can be produced
    and the script wrapper (Mac option 3) becomes the ceiling — still double-clickable, but
    requiring the user to install Python once.
@@ -275,10 +343,16 @@ for an audience of approximately zero.
    unsupported; it worked on the machine this was built on, where `python311.dll` is
    readable. Worth remembering if the build machine changes — a python.org install is the
    safer base.
-8. **Does the execute bit survive the trip to macOS?** Blocking question for the script
-   wrapper, and cheap to answer: build the archive on Windows, unpack it on a Mac, check
-   whether `Contents/MacOS/run` is still `+x`. If it is not and no archive format fixes it,
-   Mac option 3 collapses into option 5.
-9. **What exactly does Gatekeeper do to a downloaded script `.app`?** Determines whether Mac
-   option 3 is a clean double-click or carries the same Privacy & Security ritual as option 2.
+8. **Does the execute bit survive the trip to macOS?** Still the blocking question, but now
+   half-answered: `packaging/build_macos_zip.py` stores mode 0755 against a Unix
+   `create_system`, which is the form `unzip` and Archive Utility are documented to honor, and
+   the test suite asserts both are in the archive. What is untested is the other end — unpack
+   the zip on a Mac and check `run.command` is still `+x`. If it is not, the download needs a
+   `.tar.gz` instead, or the recipient needs one `chmod +x`, which is the Terminal step this
+   is designed out of.
+9. **What exactly does Gatekeeper do to a downloaded `.command`, and to a script `.app`?**
+   The shipped launcher is a bare script, expected to draw the milder "downloaded from the
+   Internet, are you sure?" prompt; the `.app` form is expected to draw the hard block. Both
+   are expectations. This also decides whether option 3 is worth building on top of what is
+   there.
    Needs checking on a real machine with a genuinely quarantined download, not a local copy.

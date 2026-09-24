@@ -5,10 +5,12 @@
 #
 # The tag message becomes the release notes, so write it the way the release
 # should read. Nothing else is needed: this job freezes the executables, zips
-# dist\SINE Templater\ and attaches the zip to a new GitHub release.
+# dist\SINE Templater\ and attaches two assets to a new GitHub release -- the
+# Windows build and the Mac download.
 #
-# Windows only, and not because of the workflow: the build is a Windows
-# executable, so it has to be frozen on Windows.
+# One Windows runner, not a matrix. The Windows build has to be frozen on Windows,
+# and the Mac download is source plus a launcher script, so there is nothing in it
+# to freeze and no reason to start a second machine to make it.
 name: Release
 
 on:
@@ -90,13 +92,25 @@ jobs:
 
           print(f"{out}  {out.stat().st_size:,} bytes  {len(files)} entries")
 
+      # Built here rather than on a macOS runner: the Mac download is the package
+      # plus run.command, nothing frozen and nothing compiled. The script is what
+      # stores the launcher's execute bit, which a zip written any other way on
+      # Windows drops -- and a run.command without it does nothing when double-
+      # clicked, with no error saying why.
+      - name: Build the Mac download
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python packaging\build_macos_zip.py "dist\SINE-Templater-macOS-$env:TAG.zip"
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          gh release create "$env:TAG" "dist/SINE-Templater-$env:TAG.zip" `
+          gh release create "$env:TAG" `
+            "dist/SINE-Templater-$env:TAG.zip" `
+            "dist/SINE-Templater-macOS-$env:TAG.zip" `
             --title "SINE Templater $env:VERSION" `
             --notes-from-tag `
             --verify-tag
