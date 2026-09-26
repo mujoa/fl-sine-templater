@@ -44,6 +44,8 @@ instead of checking version numbers.
 The input is an ordinary `.flp` saved from FL Studio. It has to hold two things, in
 this order in the channel rack:
 
+![The channel rack of an input project: three SINE Player channels named Strings, Brass and Percussion, followed by one BRSO Articulate channel as the last channel](docs/images/input_project_setup.png)
+
 1. **One or more SINE Player instances**, one per section.
 
    * Name each channel in the rack the way you want the section named: `SINE
